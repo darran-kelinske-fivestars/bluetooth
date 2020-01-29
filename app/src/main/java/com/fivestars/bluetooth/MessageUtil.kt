@@ -19,29 +19,19 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothServerSocket
 import android.bluetooth.BluetoothSocket
-import android.content.Context
-import android.os.Bundle
-import android.os.Handler
 import android.util.Log
-import com.fivestars.bluetooth.BluetoothChatService
+import kotlinx.coroutines.channels.BroadcastChannel
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.*
 
-/**
- * This class does all the work for setting up and managing Bluetooth
- * connections with other devices. It has a thread that listens for
- * incoming connections, a thread for connecting with a device, and a
- * thread for performing data transmissions when connected.
- */
-class BluetoothChatService(
-    context: Context?,
-    handler: Handler
-) {
-    // Member fields
-    private val mAdapter: BluetoothAdapter
-    private val mHandler: Handler
+class MessageUtil() {
+
+    lateinit var device: BluetoothDevice
+    val readChannel = BroadcastChannel<String>(1)
+    val writeChannel = BroadcastChannel<String>(1)
+    private val bluetoothAdapter: BluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
     private var mSecureAcceptThread: AcceptThread? = null
     private var mInsecureAcceptThread: AcceptThread? = null
     private var mConnectThread: ConnectThread? = null
@@ -65,7 +55,7 @@ class BluetoothChatService(
             )
             mState = state
             // Give the new state to the Handler so the UI Activity can update
-            mHandler.obtainMessage(MainActivity.MESSAGE_STATE_CHANGE, state, -1).sendToTarget()
+//            mHandler.obtainMessage(MainActivity.MESSAGE_STATE_CHANGE, state, -1).sendToTarget()
         }
 
     /**
@@ -139,6 +129,7 @@ class BluetoothChatService(
         device: BluetoothDevice,
         socketType: String
     ) {
+        this.device = device
         if (D) Log.d(
             TAG,
             "connected, Socket Type:$socketType"
@@ -165,12 +156,6 @@ class BluetoothChatService(
         // Start the thread to manage the connection and perform transmissions
         mConnectedThread = ConnectedThread(socket, socketType)
         mConnectedThread!!.start()
-        // Send the name of the connected device back to the UI Activity
-        val msg = mHandler.obtainMessage(MainActivity.MESSAGE_DEVICE_NAME)
-        val bundle = Bundle()
-        bundle.putString(MainActivity.DEVICE_NAME, device.name)
-        msg.data = bundle
-        mHandler.sendMessage(msg)
         state = STATE_CONNECTED
     }
 
@@ -208,25 +193,20 @@ class BluetoothChatService(
      * @see ConnectedThread.write
      */
     fun write(out: ByteArray?) { // Create temporary object
-        var r: ConnectedThread?
+        var connectedThread: ConnectedThread?
         // Synchronize a copy of the ConnectedThread
         synchronized(this) {
             if (mState != STATE_CONNECTED) return
-            r = mConnectedThread
+            connectedThread = mConnectedThread
         }
         // Perform the write unsynchronized
-        r!!.write(out)
+        out?.run { connectedThread?.write(this) }
     }
 
     /**
      * Indicate that the connection attempt failed and notify the UI Activity.
      */
     private fun connectionFailed() { // Send a failure message back to the Activity
-        val msg = mHandler.obtainMessage(MainActivity.MESSAGE_TOAST)
-        val bundle = Bundle()
-        bundle.putString(MainActivity.TOAST, "Unable to connect device")
-        msg.data = bundle
-        mHandler.sendMessage(msg)
         // Start the service over to restart listening mode
         start()
     }
@@ -235,11 +215,6 @@ class BluetoothChatService(
      * Indicate that the connection was lost and notify the UI Activity.
      */
     private fun connectionLost() { // Send a failure message back to the Activity
-        val msg = mHandler.obtainMessage(MainActivity.MESSAGE_TOAST)
-        val bundle = Bundle()
-        bundle.putString(MainActivity.TOAST, "Device connection was lost")
-        msg.data = bundle
-        mHandler.sendMessage(msg)
         // Start the service over to restart listening mode
         start()
     }
@@ -275,7 +250,7 @@ class BluetoothChatService(
                 }
                 // If a connection was accepted
                 if (socket != null) {
-                    synchronized(this@BluetoothChatService) {
+                    synchronized(this@MessageUtil) {
                         when (mState) {
                             STATE_LISTEN, STATE_CONNECTING ->  // Situation normal. Start the connected thread.
                                 connected(
@@ -325,12 +300,12 @@ class BluetoothChatService(
             // Create a new listening server socket
             try {
                 tmp = if (secure) {
-                    mAdapter.listenUsingRfcommWithServiceRecord(
+                    bluetoothAdapter.listenUsingRfcommWithServiceRecord(
                         NAME_SECURE,
                         MY_UUID_SECURE
                     )
                 } else {
-                    mAdapter.listenUsingInsecureRfcommWithServiceRecord(
+                    bluetoothAdapter.listenUsingInsecureRfcommWithServiceRecord(
                         NAME_INSECURE,
                         MY_UUID_INSECURE
                     )
@@ -362,7 +337,7 @@ class BluetoothChatService(
             )
             name = "ConnectThread$mSocketType"
             // Always cancel discovery because it will slow down a connection
-            mAdapter.cancelDiscovery()
+            bluetoothAdapter.cancelDiscovery()
             // Make a connection to the BluetoothSocket
             try { // This is a blocking call and will only return on a
 // successful connection or an exception
@@ -380,7 +355,7 @@ class BluetoothChatService(
                 return
             }
             // Reset the ConnectThread because we're done
-            synchronized(this@BluetoothChatService) { mConnectThread = null }
+            synchronized(this@MessageUtil) { mConnectThread = null }
             // Start the connected thread
             connected(mmSocket, mmDevice, mSocketType)
         }
@@ -442,14 +417,13 @@ class BluetoothChatService(
             while (true) {
                 try { // Read from the InputStream
                     bytes = mmInStream!!.read(buffer)
-                    // Send the obtained bytes to the UI Activity
-                    mHandler.obtainMessage(MainActivity.MESSAGE_READ, bytes, -1, buffer)
-                        .sendToTarget()
+                    val readMessage = String(buffer,0, bytes)
+                    readChannel.offer(readMessage)
                 } catch (e: IOException) {
                     Log.e(TAG, "disconnected", e)
                     connectionLost()
                     // Start the service over to restart listening mode
-                    this@BluetoothChatService.start()
+                    this@MessageUtil.start()
                     break
                 }
             }
@@ -459,12 +433,12 @@ class BluetoothChatService(
          * Write to the connected OutStream.
          * @param buffer  The bytes to write
          */
-        fun write(buffer: ByteArray?) {
+        fun write(buffer: ByteArray) {
             try {
                 mmOutStream!!.write(buffer)
                 // Share the sent message back to the UI Activity
-                mHandler.obtainMessage(MainActivity.MESSAGE_WRITE, -1, -1, buffer)
-                    .sendToTarget()
+                val writeMessage = String(buffer,0, buffer.size)
+                writeChannel.offer(writeMessage)
             } catch (e: IOException) {
                 Log.e(TAG, "Exception during write", e)
             }
@@ -525,14 +499,7 @@ class BluetoothChatService(
         const val STATE_CONNECTED = 3 // now connected to a remote device
     }
 
-    /**
-     * Constructor. Prepares a new BluetoothChat session.
-     * @param context  The UI Activity Context
-     * @param handler  A Handler to send messages back to the UI Activity
-     */
     init {
-        mAdapter = BluetoothAdapter.getDefaultAdapter()
         mState = STATE_NONE
-        mHandler = handler
     }
 }

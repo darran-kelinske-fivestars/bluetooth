@@ -19,6 +19,12 @@ import android.widget.TextView.OnEditorActionListener
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.asFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 
 
 class MainActivity : AppCompatActivity() {
@@ -47,8 +53,8 @@ class MainActivity : AppCompatActivity() {
     // Local Bluetooth adapter
     private var mBluetoothAdapter: BluetoothAdapter? = null
     // Member object for the chat services
-    private var mChatService: BluetoothChatService? = null
-
+    private var chatService: MessageUtil? = null
+    private var readJob = Job()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -75,7 +81,7 @@ class MainActivity : AppCompatActivity() {
             startActivityForResult(enableIntent, REQUEST_ENABLE_BT)
             // Otherwise, setup the chat session
         } else {
-            if (mChatService == null) setupChat()
+            if (chatService == null) setupChat()
         }
     }
 
@@ -86,9 +92,9 @@ class MainActivity : AppCompatActivity() {
         // Performing this check in onResume() covers the case in which BT was
 // not enabled during onStart(), so we were paused to enable it...
 // onResume() will be called when ACTION_REQUEST_ENABLE activity returns.
-        if (mChatService != null) { // Only if the state is STATE_NONE, do we know that we haven't started already
-            if (mChatService!!.state === BluetoothChatService.STATE_NONE) { // Start the Bluetooth chat services
-                mChatService!!.start()
+        if (chatService != null) { // Only if the state is STATE_NONE, do we know that we haven't started already
+            if (chatService!!.state === MessageUtil.STATE_NONE) { // Start the Bluetooth chat services
+                chatService!!.start()
             }
         }
         checkLocationPermission()
@@ -131,9 +137,21 @@ class MainActivity : AppCompatActivity() {
             sendMessage(message)
         }
         // Initialize the BluetoothChatService to perform bluetooth connections
-        mChatService = BluetoothChatService(this, mHandler)
+        chatService = MessageUtil()
         // Initialize the buffer for outgoing messages
         mOutStringBuffer = StringBuffer("")
+
+        CoroutineScope(Dispatchers.Main + readJob).launch {
+            chatService?.readChannel?.asFlow()?.collect {
+                mConversationArrayAdapter!!.add("${chatService?.device?.name}:  $it")
+            }
+        }
+
+        CoroutineScope(Dispatchers.Main + readJob).launch {
+            chatService?.writeChannel?.asFlow()?.collect {
+                mConversationArrayAdapter!!.add("Me:  $it")
+            }
+        }
     }
 
     @Synchronized
@@ -150,8 +168,9 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         // Stop the Bluetooth chat services
-        if (mChatService != null) mChatService!!.stop()
+        if (chatService != null) chatService!!.stop()
         if (D) Log.e(TAG, "--- ON DESTROY ---")
+        readJob?.cancel()
     }
 
     private fun ensureDiscoverable() {
@@ -170,14 +189,14 @@ class MainActivity : AppCompatActivity() {
      * @param message  A string of text to send.
      */
     private fun sendMessage(message: String) { // Check that we're actually connected before trying anything
-        if (mChatService!!.state !== BluetoothChatService.STATE_CONNECTED) {
+        if (chatService!!.state !== MessageUtil.STATE_CONNECTED) {
             Toast.makeText(this, R.string.not_connected, Toast.LENGTH_SHORT).show()
             return
         }
         // Check that there's actually something to send
         if (message.length > 0) { // Get the message bytes and tell the BluetoothChatService to write
             val send = message.toByteArray()
-            mChatService!!.write(send)
+            chatService!!.write(send)
             // Reset out string buffer to zero and clear the edit text field
             mOutStringBuffer!!.setLength(0)
             mOutEditText!!.setText(mOutStringBuffer)
@@ -213,40 +232,16 @@ class MainActivity : AppCompatActivity() {
                 Companion.MESSAGE_STATE_CHANGE -> {
                     if (D) Log.i(TAG, "MESSAGE_STATE_CHANGE: " + msg.arg1)
                     when (msg.arg1) {
-                        BluetoothChatService.STATE_CONNECTED -> {
+                        MessageUtil.STATE_CONNECTED -> {
                             setStatus(getString(R.string.title_connected_to, mConnectedDeviceName))
                             mConversationArrayAdapter!!.clear()
                         }
-                        BluetoothChatService.STATE_CONNECTING -> setStatus(R.string.title_connecting)
-                        BluetoothChatService.STATE_LISTEN, BluetoothChatService.STATE_NONE -> setStatus(
+                        MessageUtil.STATE_CONNECTING -> setStatus(R.string.title_connecting)
+                        MessageUtil.STATE_LISTEN, MessageUtil.STATE_NONE -> setStatus(
                             R.string.title_not_connected
                         )
                     }
                 }
-                Companion.MESSAGE_WRITE -> {
-                    val writeBuf = msg.obj as ByteArray
-                    // construct a string from the buffer
-                    val writeMessage = String(writeBuf)
-                    mConversationArrayAdapter!!.add("Me:  $writeMessage")
-                }
-                Companion.MESSAGE_READ -> {
-                    val readBuf = msg.obj as ByteArray
-                    // construct a string from the valid bytes in the buffer
-                    val readMessage = String(readBuf, 0, msg.arg1)
-                    mConversationArrayAdapter!!.add("$mConnectedDeviceName:  $readMessage")
-                }
-                Companion.MESSAGE_DEVICE_NAME -> {
-                    // save the connected device's name
-                    mConnectedDeviceName = msg.data.getString(Companion.DEVICE_NAME)
-                    Toast.makeText(
-                        applicationContext, "Connected to "
-                                + mConnectedDeviceName, Toast.LENGTH_SHORT
-                    ).show()
-                }
-                Companion.MESSAGE_TOAST -> Toast.makeText(
-                    applicationContext, msg.data.getString(Companion.TOAST),
-                    Toast.LENGTH_SHORT
-                ).show()
             }
         }
     }
@@ -283,7 +278,7 @@ class MainActivity : AppCompatActivity() {
         // Get the BluetoothDevice object
         val device = mBluetoothAdapter!!.getRemoteDevice(address)
         // Attempt to connect to the device
-        mChatService!!.connect(device, secure)
+        chatService!!.connect(device, secure)
     }
 
     override fun onCreateOptionsMenu(menu: Menu?): Boolean {
@@ -337,7 +332,6 @@ class MainActivity : AppCompatActivity() {
         const val MESSAGE_TOAST = 5
         // Key names received from the BluetoothChatService Handler
         const val DEVICE_NAME = "device_name"
-        const val TOAST = "toast"
     }
 
 }
