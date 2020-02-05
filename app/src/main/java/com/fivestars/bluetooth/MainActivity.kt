@@ -6,8 +6,6 @@ import android.bluetooth.BluetoothAdapter
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.os.Handler
-import android.os.Message
 import android.util.Log
 import android.view.KeyEvent
 import android.view.Menu
@@ -189,10 +187,6 @@ class MainActivity : AppCompatActivity() {
      * @param message  A string of text to send.
      */
     private fun sendMessage(message: String) { // Check that we're actually connected before trying anything
-        if (chatService!!.state !== MessageUtil.STATE_CONNECTED) {
-            Toast.makeText(this, R.string.not_connected, Toast.LENGTH_SHORT).show()
-            return
-        }
         // Check that there's actually something to send
         if (message.length > 0) { // Get the message bytes and tell the BluetoothChatService to write
             val send = message.toByteArray()
@@ -225,38 +219,17 @@ class MainActivity : AppCompatActivity() {
         actionBar?.subtitle = subTitle
     }
 
-    // The Handler that gets information back from the BluetoothChatService
-    private val mHandler: Handler = object : Handler() {
-        override fun handleMessage(msg: Message) {
-            when (msg.what) {
-                Companion.MESSAGE_STATE_CHANGE -> {
-                    if (D) Log.i(TAG, "MESSAGE_STATE_CHANGE: " + msg.arg1)
-                    when (msg.arg1) {
-                        MessageUtil.STATE_CONNECTED -> {
-                            setStatus(getString(R.string.title_connected_to, mConnectedDeviceName))
-                            mConversationArrayAdapter!!.clear()
-                        }
-                        MessageUtil.STATE_CONNECTING -> setStatus(R.string.title_connecting)
-                        MessageUtil.STATE_LISTEN, MessageUtil.STATE_NONE -> setStatus(
-                            R.string.title_not_connected
-                        )
-                    }
-                }
-            }
-        }
-    }
-
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (D) Log.d(TAG, "onActivityResult $resultCode")
         when (requestCode) {
             REQUEST_CONNECT_DEVICE_SECURE ->  // When DeviceListActivity returns with a device to connect
                 if (resultCode == Activity.RESULT_OK) {
-                    connectDevice(data!!, true)
+                    connectDevice(data!!)
                 }
             REQUEST_CONNECT_DEVICE_INSECURE ->  // When DeviceListActivity returns with a device to connect
                 if (resultCode == Activity.RESULT_OK) {
-                    connectDevice(data!!, false)
+                    connectDevice(data!!)
                 }
             REQUEST_ENABLE_BT ->  // When the request to enable Bluetooth returns
                 if (resultCode == Activity.RESULT_OK) { // Bluetooth is now enabled, so set up a chat session
@@ -270,15 +243,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun connectDevice(
-        data: Intent,
-        secure: Boolean
+        data: Intent
     ) { // Get the device MAC address
         val address = data.extras
             ?.getString(DeviceListActivity.EXTRA_DEVICE_ADDRESS)
         // Get the BluetoothDevice object
         val device = mBluetoothAdapter!!.getRemoteDevice(address)
         // Attempt to connect to the device
-        chatService!!.connect(device, secure)
+        chatService!!.connect(device)
     }
 
     override fun onCreateOptionsMenu(menu: Menu?): Boolean {
