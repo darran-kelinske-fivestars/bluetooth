@@ -28,6 +28,7 @@ import java.util.*
 
 class MessageUtil {
 
+    var started: Boolean = false
     lateinit var device: BluetoothDevice
     val readChannel = BroadcastChannel<String>(1)
     val writeChannel = BroadcastChannel<String>(1)
@@ -37,24 +38,6 @@ class MessageUtil {
     private var mState: Int
     private val connectedThreads: ArrayList<ConnectedThread> = arrayListOf()
     private var currentUuid = UUID.randomUUID()
-
-    /**
-     * Return the current connection state.  */// Give the new state to the Handler so the UI Activity can update
-    /**
-     * Set the current state of the chat connection
-     * @param state  An integer defining the current connection state
-     */
-    @get:Synchronized
-    @set:Synchronized
-    var state: Int
-        get() = mState
-        private set(state) {
-            if (D) Log.d(
-                TAG,
-                "setState() $mState -> $state"
-            )
-            mState = state
-        }
 
     /**
      * Start the chat service. Specifically start AcceptThread to begin a
@@ -70,11 +53,13 @@ class MessageUtil {
             mConnectThread!!.cancel()
             mConnectThread = null
         }
-        state = STATE_LISTEN
+
         if (mInsecureAcceptThread == null) {
             mInsecureAcceptThread = AcceptThread()
             mInsecureAcceptThread!!.start()
         }
+
+        started = true
     }
 
     /**
@@ -98,7 +83,6 @@ class MessageUtil {
         // Start the thread to connect with the given device
         mConnectThread = ConnectThread(device)
         mConnectThread!!.start()
-        state = STATE_CONNECTING
     }
 
     /**
@@ -119,6 +103,7 @@ class MessageUtil {
         )
         // Cancel the thread that completed the connection
         if (mConnectThread != null) {
+            mConnectThread?.state = STATE_CONNECTED
             mConnectThread!!.cancel()
             mConnectThread = null
         }
@@ -134,7 +119,6 @@ class MessageUtil {
             connectedThreads.add(this)
         }
 
-        state = STATE_CONNECTED
     }
 
     /**
@@ -147,6 +131,7 @@ class MessageUtil {
             "stop"
         )
         if (mConnectThread != null) {
+            mConnectThread?.state = STATE_NONE
             mConnectThread!!.cancel()
             mConnectThread = null
         }
@@ -154,7 +139,7 @@ class MessageUtil {
             mInsecureAcceptThread!!.cancel()
             mInsecureAcceptThread = null
         }
-        state = STATE_NONE
+
     }
 
     /**
@@ -166,8 +151,8 @@ class MessageUtil {
         var connectedThread: ConnectedThread?
         // Synchronize a copy of the ConnectedThread
         synchronized(this) {
-            if (mState != STATE_CONNECTED) return
             connectedThread = connectedThreads[0]
+            if (connectedThread?.mState != STATE_CONNECTED) return
         }
         // Perform the write unsynchronized
         out?.run { connectedThread?.write(this) }
@@ -201,7 +186,7 @@ class MessageUtil {
         override fun run() {
             if (D) Log.d(
                 TAG, "Socket Type: " + mSocketType +
-                        "BEGIN mAcceptThread" + this
+                        " BEGIN mAcceptThread" + this
             )
             name = "AcceptThread$mSocketType"
             var socket: BluetoothSocket? = null
@@ -291,6 +276,26 @@ class MessageUtil {
      */
     private inner class ConnectThread(private val mmDevice: BluetoothDevice) :
         Thread() {
+
+        /**
+         * Return the current connection state.  */// Give the new state to the Handler so the UI Activity can update
+        /**
+         * Set the current state of the chat connection
+         * @param state  An integer defining the current connection state
+         */
+        @get:Synchronized
+        @set:Synchronized
+        var state: Int
+            get() = mState
+            set(state) {
+                if (D) Log.d(
+                    TAG,
+                    "setState() $mState -> $state"
+                )
+                mState = state
+            }
+
+
         private val mmSocket: BluetoothSocket?
         private val mSocketType: String
         override fun run() {
@@ -366,6 +371,7 @@ class MessageUtil {
         socket: BluetoothSocket,
         socketType: String
     ) : Thread() {
+        var mState = STATE_NONE
         private val mmSocket: BluetoothSocket?
         private val mmInStream: InputStream?
         private val mmOutStream: OutputStream?

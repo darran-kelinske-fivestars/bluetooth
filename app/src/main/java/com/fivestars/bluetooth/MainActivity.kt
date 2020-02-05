@@ -51,7 +51,7 @@ class MainActivity : AppCompatActivity() {
     // Local Bluetooth adapter
     private var mBluetoothAdapter: BluetoothAdapter? = null
     // Member object for the chat services
-    private var chatService: MessageUtil? = null
+    private var messageUtil: MessageUtil? = null
     private var readJob = Job()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -79,7 +79,7 @@ class MainActivity : AppCompatActivity() {
             startActivityForResult(enableIntent, REQUEST_ENABLE_BT)
             // Otherwise, setup the chat session
         } else {
-            if (chatService == null) setupChat()
+            if (messageUtil == null) setupChat()
         }
     }
 
@@ -87,18 +87,15 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (D) Log.e(TAG, "+ ON RESUME +")
-        // Performing this check in onResume() covers the case in which BT was
-// not enabled during onStart(), so we were paused to enable it...
-// onResume() will be called when ACTION_REQUEST_ENABLE activity returns.
-        if (chatService != null) { // Only if the state is STATE_NONE, do we know that we haven't started already
-            if (chatService!!.state === MessageUtil.STATE_NONE) { // Start the Bluetooth chat services
-                chatService!!.start()
+        checkLocationPermission()
+        messageUtil?.run {
+            if (!started) {
+                start()
             }
         }
-        checkLocationPermission()
     }
 
-    fun checkLocationPermission() {
+    private fun checkLocationPermission() {
         if (ContextCompat.checkSelfPermission(
                 this,
                 Manifest.permission.ACCESS_COARSE_LOCATION
@@ -135,18 +132,18 @@ class MainActivity : AppCompatActivity() {
             sendMessage(message)
         }
         // Initialize the BluetoothChatService to perform bluetooth connections
-        chatService = MessageUtil()
+        messageUtil = MessageUtil()
         // Initialize the buffer for outgoing messages
         mOutStringBuffer = StringBuffer("")
 
         CoroutineScope(Dispatchers.Main + readJob).launch {
-            chatService?.readChannel?.asFlow()?.collect {
-                mConversationArrayAdapter!!.add("${chatService?.device?.name}:  $it")
+            messageUtil?.readChannel?.asFlow()?.collect {
+                mConversationArrayAdapter!!.add("${messageUtil?.device?.name}:  $it")
             }
         }
 
         CoroutineScope(Dispatchers.Main + readJob).launch {
-            chatService?.writeChannel?.asFlow()?.collect {
+            messageUtil?.writeChannel?.asFlow()?.collect {
                 mConversationArrayAdapter!!.add("Me:  $it")
             }
         }
@@ -166,7 +163,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         // Stop the Bluetooth chat services
-        if (chatService != null) chatService!!.stop()
+        if (messageUtil != null) messageUtil!!.stop()
         if (D) Log.e(TAG, "--- ON DESTROY ---")
         readJob?.cancel()
     }
@@ -190,7 +187,7 @@ class MainActivity : AppCompatActivity() {
         // Check that there's actually something to send
         if (message.length > 0) { // Get the message bytes and tell the BluetoothChatService to write
             val send = message.toByteArray()
-            chatService!!.write(send)
+            messageUtil!!.write(send)
             // Reset out string buffer to zero and clear the edit text field
             mOutStringBuffer!!.setLength(0)
             mOutEditText!!.setText(mOutStringBuffer)
@@ -250,7 +247,7 @@ class MainActivity : AppCompatActivity() {
         // Get the BluetoothDevice object
         val device = mBluetoothAdapter!!.getRemoteDevice(address)
         // Attempt to connect to the device
-        chatService!!.connect(device)
+        messageUtil!!.connect(device)
     }
 
     override fun onCreateOptionsMenu(menu: Menu?): Boolean {
