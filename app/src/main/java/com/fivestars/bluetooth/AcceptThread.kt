@@ -21,9 +21,8 @@ class AcceptThread(bluetoothAdapter: BluetoothAdapter, uuid: UUID) : Thread() {
         try {
             tmp =
                 bluetoothAdapter.listenUsingInsecureRfcommWithServiceRecord(
-                    uuid.toString(),
-                    UUID.fromString("8ce255c0-200a-11e0-ac64-0800200c9a66")
-                )
+                    "FIVESTARS",
+                    uuid)
         } catch (e: IOException) {
             Log.e(
                 MessageUtil.TAG,
@@ -37,15 +36,14 @@ class AcceptThread(bluetoothAdapter: BluetoothAdapter, uuid: UUID) : Thread() {
     override fun run() {
         if (BuildConfig.DEBUG) Log.d(
             MessageUtil.TAG,
-            "Socket Type: BEGIN mAcceptThread" + this
+            "BEGIN AcceptThread $this"
         )
         name = "AcceptThread"
-        var socket: BluetoothSocket? = null
+        var socket: BluetoothSocket?
         // Listen to the server socket if we're not connected
         while (MessageUtil.mState != MessageUtil.STATE_CONNECTED) {
-            socket = try { // This is a blocking call and will only return on a
-// successful connection or an exception
-                serverSocket!!.accept()
+            socket = try { // This is a blocking call and will only return on a successful connection or an exception
+                serverSocket?.accept()
             } catch (e: IOException) {
                 Log.e(
                     MessageUtil.TAG,
@@ -60,8 +58,7 @@ class AcceptThread(bluetoothAdapter: BluetoothAdapter, uuid: UUID) : Thread() {
                     when (MessageUtil.mState) {
                         MessageUtil.STATE_LISTEN, MessageUtil.STATE_CONNECTING ->  // Situation normal. Start the connected thread.
                             MessageUtil.connected(
-                                socket, socket.remoteDevice,
-                                "Insecure"
+                                socket, socket.remoteDevice
                             )
                         MessageUtil.STATE_NONE, MessageUtil.STATE_CONNECTED ->  // Either not ready or already connected. Terminate new socket.
                             try {
@@ -90,10 +87,10 @@ class AcceptThread(bluetoothAdapter: BluetoothAdapter, uuid: UUID) : Thread() {
     fun cancel() {
         if (BuildConfig.DEBUG) Log.d(
             MessageUtil.TAG,
-            "Socket Type cancel " + this
+            "Socket Type cancel $this"
         )
         try {
-            serverSocket!!.close()
+            serverSocket?.close()
         } catch (e: IOException) {
             Log.e(
                 MessageUtil.TAG,

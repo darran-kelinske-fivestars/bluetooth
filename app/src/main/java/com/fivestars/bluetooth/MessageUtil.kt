@@ -35,7 +35,9 @@ object MessageUtil {
     private var mInsecureAcceptThread: AcceptThread? = null
     private var mConnectThread: ConnectThread? = null
     private val connectedThreads: ArrayList<ConnectedThread> = arrayListOf()
-    private var currentUuid = UUID.randomUUID()
+    private var currentUuid: Int = 0
+    private val uuidList = ArrayList<UUID>()
+
 
     /**
      * Start the chat service. Specifically start AcceptThread to begin a
@@ -53,7 +55,7 @@ object MessageUtil {
         }
 
         if (mInsecureAcceptThread == null) {
-            mInsecureAcceptThread = AcceptThread(bluetoothAdapter, currentUuid)
+            mInsecureAcceptThread = AcceptThread(bluetoothAdapter, uuidList[currentUuid])
             mInsecureAcceptThread!!.start()
         }
         mState = STATE_LISTEN
@@ -91,13 +93,12 @@ object MessageUtil {
     @Synchronized
     fun connected(
         socket: BluetoothSocket,
-        device: BluetoothDevice,
-        socketType: String
+        device: BluetoothDevice
     ) {
         this.device = device
         if (D) Log.d(
             TAG,
-            "connected, Socket Type:$socketType"
+            "connected"
         )
         // Cancel the thread that completed the connection
         if (mConnectThread != null) {
@@ -107,11 +108,12 @@ object MessageUtil {
         }
         if (mInsecureAcceptThread != null) {
             mInsecureAcceptThread!!.cancel()
-            mInsecureAcceptThread = AcceptThread(bluetoothAdapter, currentUuid)
+            currentUuid++
+            mInsecureAcceptThread = AcceptThread(bluetoothAdapter, uuidList[currentUuid])
             mInsecureAcceptThread?.start()
         }
         // Start the thread to manage the connection and perform transmissions
-        val connectedThread = ConnectedThread(socket, socketType)
+        val connectedThread = ConnectedThread(socket)
         connectedThread.run {
             start()
             connectedThreads.add(this)
@@ -149,6 +151,9 @@ object MessageUtil {
         var connectedThread: ConnectedThread?
         // Synchronize a copy of the ConnectedThread
         synchronized(this) {
+            if (connectedThreads.isEmpty()) {
+                return
+            }
             connectedThread = connectedThreads[0]
             if (connectedThread?.mState != STATE_CONNECTED) return
         }
@@ -228,7 +233,7 @@ object MessageUtil {
             // Reset the ConnectThread because we're done
             synchronized(this) { mConnectThread = null }
             // Start the connected thread
-            connected(mmSocket, mmDevice, mSocketType)
+            connected(mmSocket, mmDevice)
         }
 
         fun cancel() {
@@ -251,7 +256,7 @@ object MessageUtil {
             try {
                 tmp =
                     mmDevice.createInsecureRfcommSocketToServiceRecord(
-                        currentUuid
+                        uuidList[currentUuid]
                     )
 
             } catch (e: IOException) {
@@ -262,7 +267,6 @@ object MessageUtil {
                 )
             }
             mmSocket = tmp
-            currentUuid = UUID.randomUUID()
         }
     }
 
@@ -271,8 +275,7 @@ object MessageUtil {
      * It handles all incoming and outgoing transmissions.
      */
     private class ConnectedThread(
-        socket: BluetoothSocket,
-        socketType: String
+        socket: BluetoothSocket
     ) : Thread() {
         var mState = STATE_NONE
         private val mmSocket: BluetoothSocket?
@@ -328,7 +331,7 @@ object MessageUtil {
         init {
             Log.d(
                 TAG,
-                "create ConnectedThread: $socketType"
+                "create ConnectedThread"
             )
             mmSocket = socket
             var tmpIn: InputStream? = null
@@ -346,6 +349,14 @@ object MessageUtil {
             }
             mmInStream = tmpIn
             mmOutStream = tmpOut
+
+            uuidList.add(UUID.fromString("fe964a9c-184c-11e6-b6ba-3e1d05defe78"))
+            uuidList.add(UUID.fromString("fe964e02-184c-11e6-b6ba-3e1d05defe78"))
+            uuidList.add(UUID.fromString("fe964f9c-184c-11e6-b6ba-3e1d05defe78"))
+            uuidList.add(UUID.fromString("fe965438-184c-11e6-b6ba-3e1d05defe78"))
+            uuidList.add(UUID.fromString("fe9655be-184c-11e6-b6ba-3e1d05defe78"))
+            uuidList.add(UUID.fromString("fe965708-184c-11e6-b6ba-3e1d05defe78"))
+            uuidList.add(UUID.fromString("fe965848-184c-11e6-b6ba-3e1d05defe78"))
         }
     }
 
