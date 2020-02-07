@@ -77,8 +77,9 @@ class MainActivity : AppCompatActivity() {
         // If BT is not on, request that it be enabled.
 // setupChat() will then be called during onActivityResult
         if (!mBluetoothAdapter!!.isEnabled) {
-            val enableIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
-            startActivityForResult(enableIntent, REQUEST_ENABLE_BT)
+//            val enableIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
+//            startActivityForResult(enableIntent, REQUEST_ENABLE_BT)
+            mBluetoothAdapter?.enable()
             // Otherwise, setup the chat session
         } else {
             if (chatService == null) setupChat()
