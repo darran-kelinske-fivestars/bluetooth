@@ -19,12 +19,15 @@ import android.widget.TextView.OnEditorActionListener
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
+import com.fivestars.bluetooth.model.BluetoothMessage
+import com.squareup.moshi.JsonAdapter
+import com.squareup.moshi.Moshi
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.launch
+import org.json.JSONObject
+import java.lang.Thread.sleep
+import java.util.*
 
 
 class MainActivity : AppCompatActivity() {
@@ -38,10 +41,8 @@ class MainActivity : AppCompatActivity() {
     private val REQUEST_ENABLE_BT = 3
     private val REQUEST_COARSE_LOCATION = 4
 
-
     // Layout Views
     private var mConversationView: ListView? = null
-    private var mOutEditText: EditText? = null
     private var mSendButton: Button? = null
 
     // Name of the connected device
@@ -55,6 +56,10 @@ class MainActivity : AppCompatActivity() {
     // Member object for the chat services
     private var chatService: MessageUtil? = null
     private var readJob = Job()
+    private val moshi: Moshi = Moshi.Builder().build()
+    val adapter: JsonAdapter<BluetoothMessage> = moshi.adapter(BluetoothMessage::class.java)
+    var currentMessage: BluetoothMessage? = null
+    var ack = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -74,16 +79,10 @@ class MainActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         if (D) Log.e(TAG, "++ ON START ++")
-        // If BT is not on, request that it be enabled.
-// setupChat() will then be called during onActivityResult
         if (!mBluetoothAdapter!!.isEnabled) {
-//            val enableIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
-//            startActivityForResult(enableIntent, REQUEST_ENABLE_BT)
             mBluetoothAdapter?.enable()
-            // Otherwise, setup the chat session
-        } else {
-            if (chatService == null) setupChat()
         }
+         if (chatService == null) setupChat()
     }
 
     @Synchronized
@@ -126,17 +125,17 @@ class MainActivity : AppCompatActivity() {
         mConversationArrayAdapter = ArrayAdapter(this, R.layout.message)
         mConversationView = findViewById<View>(R.id.`in`) as ListView
         mConversationView!!.adapter = mConversationArrayAdapter
-        // Initialize the compose field with a listener for the return key
-        mOutEditText = findViewById<View>(R.id.edit_text_out) as EditText
-        mOutEditText!!.setOnEditorActionListener(mWriteListener)
         // Initialize the send button with a listener that for click events
         mSendButton = findViewById<View>(R.id.button_send) as Button
+
         mSendButton!!.setOnClickListener {
             // Send a message using content of the edit text widget
             val view = findViewById<View>(R.id.edit_text_out) as TextView
-            val message = view.text.toString()
-            sendMessage(message)
+
+            currentMessage = BluetoothMessage(Date().time)
+            sendMessage(adapter.toJson(currentMessage))
         }
+
         // Initialize the BluetoothChatService to perform bluetooth connections
         chatService = MessageUtil()
         // Initialize the buffer for outgoing messages
@@ -144,7 +143,19 @@ class MainActivity : AppCompatActivity() {
 
         CoroutineScope(Dispatchers.Main + readJob).launch {
             chatService?.readChannel?.asFlow()?.collect {
+                if (currentMessage == null) {
+                    sendMessage(it)
+                } else {
+                    val parsedMessage = adapter.fromJson(it)
+                    parsedMessage?.run {
+                        if (time == currentMessage?.time) {
+                            currentMessage = BluetoothMessage(Date().time)
+                            sendMessage(adapter.toJson(currentMessage))
+                        }
+                    }
+                }
                 mConversationArrayAdapter!!.add("${chatService?.device?.name}:  $it")
+
             }
         }
 
@@ -155,23 +166,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    @Synchronized
-    override fun onPause() {
-        super.onPause()
-        if (D) Log.e(TAG, "- ON PAUSE -")
-    }
-
-    override fun onStop() {
-        super.onStop()
-        if (D) Log.e(TAG, "-- ON STOP --")
-    }
-
     override fun onDestroy() {
         super.onDestroy()
         // Stop the Bluetooth chat services
         if (chatService != null) chatService!!.stop()
         if (D) Log.e(TAG, "--- ON DESTROY ---")
-        readJob?.cancel()
+        readJob.cancel()
     }
 
     private fun ensureDiscoverable() {
@@ -190,31 +190,19 @@ class MainActivity : AppCompatActivity() {
      * @param message  A string of text to send.
      */
     private fun sendMessage(message: String) { // Check that we're actually connected before trying anything
-        if (chatService!!.state !== MessageUtil.STATE_CONNECTED) {
+        if (chatService?.state != MessageUtil.STATE_CONNECTED) {
             Toast.makeText(this, R.string.not_connected, Toast.LENGTH_SHORT).show()
             return
         }
+
         // Check that there's actually something to send
         if (message.length > 0) { // Get the message bytes and tell the BluetoothChatService to write
             val send = message.toByteArray()
             chatService!!.write(send)
             // Reset out string buffer to zero and clear the edit text field
             mOutStringBuffer!!.setLength(0)
-            mOutEditText!!.setText(mOutStringBuffer)
         }
     }
-
-    // The action listener for the EditText widget, to listen for the return key
-    private val mWriteListener =
-        OnEditorActionListener { view, actionId, event ->
-            // If the action is a key-up event on the return key, send the message
-            if (actionId == EditorInfo.IME_NULL && event.action == KeyEvent.ACTION_UP) {
-                val message = view.text.toString()
-                sendMessage(message)
-            }
-            if (D) Log.i(TAG, "END onEditorAction")
-            true
-        }
 
     private fun setStatus(resId: Int) {
         val actionBar = actionBar
@@ -224,27 +212,6 @@ class MainActivity : AppCompatActivity() {
     private fun setStatus(subTitle: CharSequence) {
         val actionBar = actionBar
         actionBar?.subtitle = subTitle
-    }
-
-    // The Handler that gets information back from the BluetoothChatService
-    private val mHandler: Handler = object : Handler() {
-        override fun handleMessage(msg: Message) {
-            when (msg.what) {
-                Companion.MESSAGE_STATE_CHANGE -> {
-                    if (D) Log.i(TAG, "MESSAGE_STATE_CHANGE: " + msg.arg1)
-                    when (msg.arg1) {
-                        MessageUtil.STATE_CONNECTED -> {
-                            setStatus(getString(R.string.title_connected_to, mConnectedDeviceName))
-                            mConversationArrayAdapter!!.clear()
-                        }
-                        MessageUtil.STATE_CONNECTING -> setStatus(R.string.title_connecting)
-                        MessageUtil.STATE_LISTEN, MessageUtil.STATE_NONE -> setStatus(
-                            R.string.title_not_connected
-                        )
-                    }
-                }
-            }
-        }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -303,16 +270,9 @@ class MainActivity : AppCompatActivity() {
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         var serverIntent: Intent? = null
         when (item.itemId) {
-            R.id.secure_connect_scan -> {
-                // Launch the DeviceListActivity to see devices and do scan
-                serverIntent = Intent(this, DeviceListActivity::class.java)
-                startActivityForResult(serverIntent, REQUEST_CONNECT_DEVICE_SECURE)
-                return true
-            }
             R.id.insecure_connect_scan -> {
                 // Launch the DeviceListActivity to see devices and do scan
-                serverIntent = Intent(this, DeviceListActivity::class.java)
-                startActivityForResult(serverIntent, REQUEST_CONNECT_DEVICE_INSECURE)
+                connectDevice(Intent().putExtra(DeviceListActivity.EXTRA_DEVICE_ADDRESS, "AC:37:43:D4:17:E5"), false)
                 return true
             }
             R.id.discoverable -> {
@@ -323,16 +283,4 @@ class MainActivity : AppCompatActivity() {
         }
         return false
     }
-
-    companion object {
-        // Message types sent from the BluetoothChatService Handler
-        public const val MESSAGE_STATE_CHANGE = 1
-        const val MESSAGE_READ = 2
-        const val MESSAGE_WRITE = 3
-        const val MESSAGE_DEVICE_NAME = 4
-        const val MESSAGE_TOAST = 5
-        // Key names received from the BluetoothChatService Handler
-        const val DEVICE_NAME = "device_name"
-    }
-
 }

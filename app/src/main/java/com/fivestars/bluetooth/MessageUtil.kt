@@ -486,12 +486,12 @@ class MessageUtil() {
         private const val D = true
         // Name for the SDP record when creating server socket
         private const val NAME_SECURE = "BluetoothChatSecure"
-        private const val NAME_INSECURE = "BluetoothChatInsecure"
+        private const val NAME_INSECURE = "PhoneGapBluetoothSerialServiceInSecure"
         // Unique UUID for this application
         private val MY_UUID_SECURE =
             UUID.fromString("fa87c0d0-afac-11de-8a39-0800200c9a66")
         private val MY_UUID_INSECURE =
-            UUID.fromString("8ce255c0-200a-11e0-ac64-0800200c9a66")
+            UUID.fromString("23F18142-B389-4772-93BD-52BDBB2C03E9")
         // Constants that indicate the current connection state
         const val STATE_NONE = 0 // we're doing nothing
         const val STATE_LISTEN = 1 // now listening for incoming connections
