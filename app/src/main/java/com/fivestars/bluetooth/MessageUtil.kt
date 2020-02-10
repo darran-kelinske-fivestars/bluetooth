@@ -26,7 +26,7 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.util.*
 
-class MessageUtil() {
+class MessageUtil {
 
     lateinit var device: BluetoothDevice
     val readChannel = BroadcastChannel<String>(1)

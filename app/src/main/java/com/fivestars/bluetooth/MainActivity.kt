@@ -6,26 +6,24 @@ import android.bluetooth.BluetoothAdapter
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.os.Handler
-import android.os.Message
 import android.util.Log
-import android.view.KeyEvent
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
-import android.view.inputmethod.EditorInfo
-import android.widget.*
-import android.widget.TextView.OnEditorActionListener
+import android.widget.ArrayAdapter
+import android.widget.Button
+import android.widget.ListView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.fivestars.bluetooth.model.BluetoothMessage
 import com.squareup.moshi.JsonAdapter
 import com.squareup.moshi.Moshi
+import kotlinx.android.synthetic.main.activity_main.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.collect
-import org.json.JSONObject
 import java.lang.Thread.sleep
 import java.util.*
 
@@ -57,22 +55,39 @@ class MainActivity : AppCompatActivity() {
     private var chatService: MessageUtil? = null
     private var readJob = Job()
     private val moshi: Moshi = Moshi.Builder().build()
-    val adapter: JsonAdapter<BluetoothMessage> = moshi.adapter(BluetoothMessage::class.java)
-    var currentMessage: BluetoothMessage? = null
-    var ack = false
+    private val adapter: JsonAdapter<BluetoothMessage> = moshi.adapter(BluetoothMessage::class.java)
+    private var currentMessage: BluetoothMessage? = null
+    private var totalBytesSent: Long = 0
+    private var totalBytesReceived: Long = 0
+    private var startTime: Long = 0
+    private var byteArrayPayload = ByteArray(256)
+    private var random = Random()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (D) Log.e(TAG, "+++ ON CREATE +++")
-        // Set up the window layout
-        setContentView(R.layout.main)
-        // Get local Bluetooth adapter
+        setContentView(R.layout.activity_main)
         mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
-        // If the adapter is null, then Bluetooth is not supported
         if (mBluetoothAdapter == null) {
             Toast.makeText(this, "Bluetooth is not available", Toast.LENGTH_LONG).show()
             finish()
             return
+        }
+
+        CoroutineScope(Dispatchers.Default + readJob).launch {
+            while (true) {
+                val totalTimeInSeconds: Long = ((Date().time - startTime)) / 1000
+                try {
+                    mConversationArrayAdapter?.clear()
+                    withContext(Dispatchers.Main) {
+                        text_view_status.text =
+                            "Bytes/second sent: ${totalBytesSent / totalTimeInSeconds} : Bytes/second received: ${totalBytesReceived / totalTimeInSeconds}"
+                    }
+                } catch (e: Exception) {
+                    Log.d(TAG, "The divide by zero" + e)
+                }
+                sleep(1000)
+            }
         }
     }
 
@@ -82,16 +97,13 @@ class MainActivity : AppCompatActivity() {
         if (!mBluetoothAdapter!!.isEnabled) {
             mBluetoothAdapter?.enable()
         }
-         if (chatService == null) setupChat()
+        if (chatService == null) setupChat()
     }
 
     @Synchronized
     override fun onResume() {
         super.onResume()
         if (D) Log.e(TAG, "+ ON RESUME +")
-        // Performing this check in onResume() covers the case in which BT was
-// not enabled during onStart(), so we were paused to enable it...
-// onResume() will be called when ACTION_REQUEST_ENABLE activity returns.
         if (chatService != null) { // Only if the state is STATE_NONE, do we know that we haven't started already
             if (chatService!!.state === MessageUtil.STATE_NONE) { // Start the Bluetooth chat services
                 chatService!!.start()
@@ -112,8 +124,10 @@ class MainActivity : AppCompatActivity() {
             != PackageManager.PERMISSION_GRANTED
         ) {
             ActivityCompat.requestPermissions(
-                this, arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,
-                Manifest.permission.ACCESS_FINE_LOCATION),
+                this, arrayOf(
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                    Manifest.permission.ACCESS_FINE_LOCATION
+                ),
                 REQUEST_COARSE_LOCATION
             )
         }
@@ -129,10 +143,9 @@ class MainActivity : AppCompatActivity() {
         mSendButton = findViewById<View>(R.id.button_send) as Button
 
         mSendButton!!.setOnClickListener {
-            // Send a message using content of the edit text widget
-            val view = findViewById<View>(R.id.edit_text_out) as TextView
-
-            currentMessage = BluetoothMessage(Date().time)
+            startTime = Date().time
+            random.nextBytes(byteArrayPayload)
+            currentMessage = BluetoothMessage(Date().time, byteArrayPayload)
             sendMessage(adapter.toJson(currentMessage))
         }
 
@@ -141,9 +154,13 @@ class MainActivity : AppCompatActivity() {
         // Initialize the buffer for outgoing messages
         mOutStringBuffer = StringBuffer("")
 
-        CoroutineScope(Dispatchers.Main + readJob).launch {
+        CoroutineScope(Dispatchers.IO + readJob).launch {
             chatService?.readChannel?.asFlow()?.collect {
+                totalBytesReceived += it.length
                 if (currentMessage == null) {
+                    if (startTime == 0L) {
+                        startTime = Date().time
+                    }
                     sendMessage(it)
                 } else {
                     val parsedMessage = adapter.fromJson(it)
@@ -154,7 +171,10 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                 }
-                mConversationArrayAdapter!!.add("${chatService?.device?.name}:  $it")
+
+                withContext(Dispatchers.Main) {
+                    mConversationArrayAdapter!!.add("${chatService?.device?.name}:  $it")
+                }
 
             }
         }
@@ -195,13 +215,12 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Check that there's actually something to send
-        if (message.length > 0) { // Get the message bytes and tell the BluetoothChatService to write
+        if (message.isNotEmpty()) {
             val send = message.toByteArray()
+            totalBytesSent += send.size
             chatService!!.write(send)
-            // Reset out string buffer to zero and clear the edit text field
-            mOutStringBuffer!!.setLength(0)
         }
+
     }
 
     private fun setStatus(resId: Int) {
@@ -272,7 +291,8 @@ class MainActivity : AppCompatActivity() {
         when (item.itemId) {
             R.id.insecure_connect_scan -> {
                 // Launch the DeviceListActivity to see devices and do scan
-                connectDevice(Intent().putExtra(DeviceListActivity.EXTRA_DEVICE_ADDRESS, "AC:37:43:D4:17:E5"), false)
+                serverIntent = Intent(this, DeviceListActivity::class.java)
+                startActivityForResult(serverIntent, REQUEST_CONNECT_DEVICE_INSECURE)
                 return true
             }
             R.id.discoverable -> {
