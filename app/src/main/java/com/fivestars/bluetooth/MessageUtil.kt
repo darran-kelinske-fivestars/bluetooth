@@ -26,17 +26,21 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.util.*
 
+
 class MessageUtil {
 
     lateinit var device: BluetoothDevice
     val readChannel = BroadcastChannel<String>(1)
     val writeChannel = BroadcastChannel<String>(1)
+    val statusChannel = BroadcastChannel<String>(1)
     private val bluetoothAdapter: BluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
     private var mSecureAcceptThread: AcceptThread? = null
     private var mInsecureAcceptThread: AcceptThread? = null
     private var mConnectThread: ConnectThread? = null
     private var mConnectedThread: ConnectedThread? = null
     private var mState: Int
+    var stringBuffer = StringBuffer()
+
 
     /**
      * Return the current connection state.  */// Give the new state to the Handler so the UI Activity can update
@@ -54,8 +58,7 @@ class MessageUtil {
                 "setState() $mState -> $state"
             )
             mState = state
-            // Give the new state to the Handler so the UI Activity can update
-//            mHandler.obtainMessage(MainActivity.MESSAGE_STATE_CHANGE, state, -1).sendToTarget()
+            statusChannel.offer(state.toString())
         }
 
     /**
@@ -189,18 +192,27 @@ class MessageUtil {
 
     /**
      * Write to the ConnectedThread in an unsynchronized manner
-     * @param out The bytes to write
+     * @param byteArrayToWrite The bytes to write
      * @see ConnectedThread.write
      */
-    fun write(out: ByteArray?) { // Create temporary object
+    fun write(byteArrayToWrite: ByteArray?) { // Create temporary object
         var connectedThread: ConnectedThread?
-        // Synchronize a copy of the ConnectedThread
+
         synchronized(this) {
             if (mState != STATE_CONNECTED) return
             connectedThread = mConnectedThread
         }
-        // Perform the write unsynchronized
-        out?.run { connectedThread?.write(this) }
+        byteArrayToWrite?.run { connectedThread?.write(this) }
+    }
+
+    private fun readUntil() {
+        var data = ""
+        val index: Int = stringBuffer.indexOf("\n", 0)
+        if (index > -1) {
+            data = stringBuffer.substring(0, index + "\n".length)
+            stringBuffer.delete(0, index + "\n".length)
+        }
+        readChannel.offer(data)
     }
 
     /**
@@ -411,14 +423,15 @@ class MessageUtil {
         private val mmOutStream: OutputStream?
         override fun run() {
             Log.i(TAG, "BEGIN mConnectedThread")
+            statusChannel.offer("CONNECTED")
             val buffer = ByteArray(1024)
             var bytes: Int
             // Keep listening to the InputStream while connected
             while (true) {
                 try { // Read from the InputStream
                     bytes = mmInStream!!.read(buffer)
-                    val readMessage = String(buffer,0, bytes)
-                    readChannel.offer(readMessage)
+                    stringBuffer.append(String(buffer,0, bytes))
+                    readUntil()
                 } catch (e: IOException) {
                     Log.e(TAG, "disconnected", e)
                     connectionLost()
@@ -446,6 +459,7 @@ class MessageUtil {
 
         fun cancel() {
             try {
+                statusChannel.offer("DISCONNECTED")
                 mmSocket!!.close()
             } catch (e: IOException) {
                 Log.e(

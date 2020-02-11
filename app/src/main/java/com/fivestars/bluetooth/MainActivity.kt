@@ -9,15 +9,13 @@ import android.os.Bundle
 import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
-import android.view.View
 import android.widget.ArrayAdapter
-import android.widget.Button
-import android.widget.ListView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import com.fivestars.bluetooth.model.BluetoothMessage
+import com.fivestars.bluetooth.model.MessageType
+import com.fivestars.bluetooth.model.TestMessage
 import com.squareup.moshi.JsonAdapter
 import com.squareup.moshi.Moshi
 import kotlinx.android.synthetic.main.activity_main.*
@@ -36,32 +34,24 @@ class MainActivity : AppCompatActivity() {
     // Intent request codes
     private val REQUEST_CONNECT_DEVICE_SECURE = 1
     private val REQUEST_CONNECT_DEVICE_INSECURE = 2
-    private val REQUEST_ENABLE_BT = 3
     private val REQUEST_COARSE_LOCATION = 4
-
-    // Layout Views
-    private var mConversationView: ListView? = null
-    private var mSendButton: Button? = null
 
     // Name of the connected device
     private var mConnectedDeviceName: String? = null
-    // Array adapter for the conversation thread
-    private var mConversationArrayAdapter: ArrayAdapter<String>? = null
-    // String buffer for outgoing messages
-    private var mOutStringBuffer: StringBuffer? = null
     // Local Bluetooth adapter
     private var mBluetoothAdapter: BluetoothAdapter? = null
     // Member object for the chat services
-    private var chatService: MessageUtil? = null
+    private val messageUtil: MessageUtil = MessageUtil()
     private var readJob = Job()
-    private val moshi: Moshi = Moshi.Builder().build()
-    private val adapter: JsonAdapter<BluetoothMessage> = moshi.adapter(BluetoothMessage::class.java)
-    private var currentMessage: BluetoothMessage? = null
-    private var totalBytesSent: Long = 0
-    private var totalBytesReceived: Long = 0
+    private val moshi: Moshi = Moshi.Builder()
+        .build()
+    private val adapter: JsonAdapter<TestMessage> = moshi.adapter(TestMessage::class.java)
+    private var currentMessage: TestMessage? = null
+    private var totalBytesSent: Long = 0L
+    private var totalBytesReceived: Long = 0L
     private var startTime: Long = 0
     private var byteArrayPayload = ByteArray(256)
-    private var random = Random()
+    private val random = Random()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -74,14 +64,27 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        setStatus("yowza")
+
         CoroutineScope(Dispatchers.Default + readJob).launch {
             while (true) {
                 val totalTimeInSeconds: Long = ((Date().time - startTime)) / 1000
                 try {
-                    mConversationArrayAdapter?.clear()
                     withContext(Dispatchers.Main) {
+
+                        var totalBytesSentSecond: Long = 0
+
+                        if (totalBytesSent != 0L) {
+                            totalBytesSentSecond = (totalBytesSent / totalTimeInSeconds)
+                        }
+
+                        var totalBytesReceivedSecond: Long = 0
+
+                        if (totalBytesReceived != 0L) {
+                            totalBytesReceivedSecond = (totalBytesReceived / totalTimeInSeconds)
+                        }
                         text_view_status.text =
-                            "Bytes/second sent: ${totalBytesSent / totalTimeInSeconds} : Bytes/second received: ${totalBytesReceived / totalTimeInSeconds}"
+                            "Bytes/second sent: $totalBytesSentSecond : Bytes/second received: $totalBytesReceivedSecond"
                     }
                 } catch (e: Exception) {
                     Log.d(TAG, "The divide by zero" + e)
@@ -89,25 +92,79 @@ class MainActivity : AppCompatActivity() {
                 sleep(1000)
             }
         }
-    }
 
-    override fun onStart() {
-        super.onStart()
-        if (D) Log.e(TAG, "++ ON START ++")
-        if (!mBluetoothAdapter!!.isEnabled) {
+        if (!mBluetoothAdapter?.isEnabled!!) {
             mBluetoothAdapter?.enable()
         }
-        if (chatService == null) setupChat()
+
+        CoroutineScope(Dispatchers.Main + readJob).launch {
+            messageUtil.statusChannel?.asFlow()?.collect {
+                setStatus(it)
+            }
+        }
+
+        button_bidirectional.setOnClickListener {
+            val payloadSize = edit_text_payload_size.text.toString()
+            edit_text_payload_size.isEnabled = false
+            byteArrayPayload = ByteArray(payloadSize.toInt())
+            startTime = Date().time
+
+            random.nextBytes(byteArrayPayload)
+            currentMessage =
+                TestMessage(Date().time, MessageType.BIDIRECTIONAL, String(byteArrayPayload))
+            sendMessage(adapter.toJson(currentMessage))
+        }
+
+        button_unidirectional.setOnClickListener {
+            val payloadSize = edit_text_payload_size.text.toString()
+            edit_text_payload_size.isEnabled = false
+            byteArrayPayload = ByteArray(payloadSize.toInt())
+            startTime = Date().time
+            CoroutineScope(Dispatchers.IO + readJob).launch {
+                while (true) {
+                    random.nextBytes(byteArrayPayload)
+                    random.nextBytes(byteArrayPayload)
+                    currentMessage = TestMessage(
+                        Date().time,
+                        MessageType.UNIDIRECTIONAL,
+                        String(byteArrayPayload)
+                    )
+                    sendMessage(adapter.toJson(currentMessage))
+                }
+            }
+        }
+
+        CoroutineScope(Dispatchers.IO + readJob).launch {
+            messageUtil?.readChannel?.asFlow()?.collect {
+                val parsedMessage = adapter.fromJson(it)
+                totalBytesReceived += it.toByteArray().size
+                if (startTime == 0L) {
+                    startTime = Date().time
+                }
+                if (currentMessage == null && parsedMessage?.messageType == MessageType.BIDIRECTIONAL) {
+                    sendMessage(it)
+                } else {
+                    parsedMessage?.run {
+                        if (time == currentMessage?.time) {
+                            currentMessage = TestMessage(
+                                Date().time, MessageType.BIDIRECTIONAL, String(
+                                    byteArrayPayload
+                                )
+                            )
+                            sendMessage(adapter.toJson(currentMessage))
+                        }
+                    }
+                }
+            }
+        }
     }
 
     @Synchronized
     override fun onResume() {
         super.onResume()
         if (D) Log.e(TAG, "+ ON RESUME +")
-        if (chatService != null) { // Only if the state is STATE_NONE, do we know that we haven't started already
-            if (chatService!!.state === MessageUtil.STATE_NONE) { // Start the Bluetooth chat services
-                chatService!!.start()
-            }
+        if (messageUtil.state == MessageUtil.STATE_NONE) {
+            messageUtil.start()
         }
         checkLocationPermission()
     }
@@ -133,63 +190,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun setupChat() {
-        Log.d(TAG, "setupChat()")
-        // Initialize the array adapter for the conversation thread
-        mConversationArrayAdapter = ArrayAdapter(this, R.layout.message)
-        mConversationView = findViewById<View>(R.id.`in`) as ListView
-        mConversationView!!.adapter = mConversationArrayAdapter
-        // Initialize the send button with a listener that for click events
-        mSendButton = findViewById<View>(R.id.button_send) as Button
-
-        mSendButton!!.setOnClickListener {
-            startTime = Date().time
-            random.nextBytes(byteArrayPayload)
-            currentMessage = BluetoothMessage(Date().time, byteArrayPayload)
-            sendMessage(adapter.toJson(currentMessage))
-        }
-
-        // Initialize the BluetoothChatService to perform bluetooth connections
-        chatService = MessageUtil()
-        // Initialize the buffer for outgoing messages
-        mOutStringBuffer = StringBuffer("")
-
-        CoroutineScope(Dispatchers.IO + readJob).launch {
-            chatService?.readChannel?.asFlow()?.collect {
-                totalBytesReceived += it.length
-                if (currentMessage == null) {
-                    if (startTime == 0L) {
-                        startTime = Date().time
-                    }
-                    sendMessage(it)
-                } else {
-                    val parsedMessage = adapter.fromJson(it)
-                    parsedMessage?.run {
-                        if (time == currentMessage?.time) {
-                            currentMessage = BluetoothMessage(Date().time)
-                            sendMessage(adapter.toJson(currentMessage))
-                        }
-                    }
-                }
-
-                withContext(Dispatchers.Main) {
-                    mConversationArrayAdapter!!.add("${chatService?.device?.name}:  $it")
-                }
-
-            }
-        }
-
-        CoroutineScope(Dispatchers.Main + readJob).launch {
-            chatService?.writeChannel?.asFlow()?.collect {
-                mConversationArrayAdapter!!.add("Me:  $it")
-            }
-        }
-    }
-
     override fun onDestroy() {
         super.onDestroy()
         // Stop the Bluetooth chat services
-        if (chatService != null) chatService!!.stop()
+        messageUtil.stop()
         if (D) Log.e(TAG, "--- ON DESTROY ---")
         readJob.cancel()
     }
@@ -210,15 +214,14 @@ class MainActivity : AppCompatActivity() {
      * @param message  A string of text to send.
      */
     private fun sendMessage(message: String) { // Check that we're actually connected before trying anything
-        if (chatService?.state != MessageUtil.STATE_CONNECTED) {
-            Toast.makeText(this, R.string.not_connected, Toast.LENGTH_SHORT).show()
+        if (messageUtil.state != MessageUtil.STATE_CONNECTED) {
             return
         }
 
         if (message.isNotEmpty()) {
-            val send = message.toByteArray()
+            val send = (message + "\n").toByteArray()
             totalBytesSent += send.size
-            chatService!!.write(send)
+            messageUtil.write(send)
         }
 
     }
@@ -229,7 +232,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setStatus(subTitle: CharSequence) {
-        val actionBar = actionBar
+        val actionBar = supportActionBar
         actionBar?.subtitle = subTitle
     }
 
@@ -245,14 +248,6 @@ class MainActivity : AppCompatActivity() {
                 if (resultCode == Activity.RESULT_OK) {
                     connectDevice(data!!, false)
                 }
-            REQUEST_ENABLE_BT ->  // When the request to enable Bluetooth returns
-                if (resultCode == Activity.RESULT_OK) { // Bluetooth is now enabled, so set up a chat session
-                    setupChat()
-                } else { // User did not enable Bluetooth or an error occurred
-                    Log.d(TAG, "BT not enabled")
-                    Toast.makeText(this, R.string.bt_not_enabled_leaving, Toast.LENGTH_SHORT).show()
-                    finish()
-                }
         }
     }
 
@@ -265,7 +260,7 @@ class MainActivity : AppCompatActivity() {
         // Get the BluetoothDevice object
         val device = mBluetoothAdapter!!.getRemoteDevice(address)
         // Attempt to connect to the device
-        chatService!!.connect(device, secure)
+        messageUtil!!.connect(device, secure)
     }
 
     override fun onCreateOptionsMenu(menu: Menu?): Boolean {
