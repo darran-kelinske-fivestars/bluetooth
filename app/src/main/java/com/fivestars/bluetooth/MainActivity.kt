@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.collect
 import java.lang.Thread.sleep
 import java.util.*
+import java.util.concurrent.atomic.AtomicLong
 
 
 class MainActivity : AppCompatActivity() {
@@ -47,9 +48,9 @@ class MainActivity : AppCompatActivity() {
         .build()
     private val adapter: JsonAdapter<TestMessage> = moshi.adapter(TestMessage::class.java)
     private var currentMessage: TestMessage? = null
-    private var totalBytesSent: Long = 0L
-    private var totalBytesReceived: Long = 0L
-    private var startTime: Long = 0
+    private var totalBytesSent: AtomicLong = AtomicLong(0)
+    private var totalBytesReceived: AtomicLong = AtomicLong(0)
+    private var startTime: AtomicLong = AtomicLong(0)
     private var byteArrayPayload = ByteArray(256)
     private val random = Random()
 
@@ -68,20 +69,20 @@ class MainActivity : AppCompatActivity() {
 
         CoroutineScope(Dispatchers.Default + readJob).launch {
             while (true) {
-                val totalTimeInSeconds: Long = ((Date().time - startTime)) / 1000
+                val totalTimeInSeconds: Long = ((Date().time - startTime.get())) / 1000
                 try {
                     withContext(Dispatchers.Main) {
 
                         var totalBytesSentSecond: Long = 0
 
-                        if (totalBytesSent != 0L) {
-                            totalBytesSentSecond = (totalBytesSent / totalTimeInSeconds)
+                        if (totalBytesSent.get() != 0L) {
+                            totalBytesSentSecond = (totalBytesSent.get() / totalTimeInSeconds)
                         }
 
                         var totalBytesReceivedSecond: Long = 0
 
-                        if (totalBytesReceived != 0L) {
-                            totalBytesReceivedSecond = (totalBytesReceived / totalTimeInSeconds)
+                        if (totalBytesReceived.get() != 0L) {
+                            totalBytesReceivedSecond = (totalBytesReceived.get() / totalTimeInSeconds)
                         }
                         text_view_status.text =
                             "Total bytes sent: $totalBytesSent \nBytes/second sent: $totalBytesSentSecond\nTotal bytes received: $totalBytesReceived\nBytes/second received: $totalBytesReceivedSecond"
@@ -89,7 +90,7 @@ class MainActivity : AppCompatActivity() {
                 } catch (e: Exception) {
                     Log.d(TAG, "The divide by zero" + e)
                 }
-                sleep(1000)
+                sleep(2000)
             }
         }
 
@@ -104,32 +105,17 @@ class MainActivity : AppCompatActivity() {
         }
 
         button_bidirectional.setOnClickListener {
-            val payloadSize = edit_text_payload_size.text.toString()
-            edit_text_payload_size.isEnabled = false
-            byteArrayPayload = ByteArray(payloadSize.toInt())
-            startTime = Date().time
+            setPayLoadSizeAndStartTime()
+            randomizeAndSendMessage(MessageType.BIDIRECTIONAL)
 
-            random.nextBytes(byteArrayPayload)
-            currentMessage =
-                TestMessage(Date().time, MessageType.BIDIRECTIONAL, String(byteArrayPayload))
-            sendMessage(adapter.toJson(currentMessage))
         }
 
         button_unidirectional.setOnClickListener {
-            val payloadSize = edit_text_payload_size.text.toString()
-            edit_text_payload_size.isEnabled = false
-            byteArrayPayload = ByteArray(payloadSize.toInt())
-            startTime = Date().time
+            setPayLoadSizeAndStartTime()
+
             CoroutineScope(Dispatchers.IO + readJob).launch {
                 while (true) {
-                    random.nextBytes(byteArrayPayload)
-                    random.nextBytes(byteArrayPayload)
-                    currentMessage = TestMessage(
-                        Date().time,
-                        MessageType.UNIDIRECTIONAL,
-                        String(byteArrayPayload)
-                    )
-                    sendMessage(adapter.toJson(currentMessage))
+                    randomizeAndSendMessage(MessageType.UNIDIRECTIONAL)
                 }
             }
         }
@@ -137,9 +123,9 @@ class MainActivity : AppCompatActivity() {
         CoroutineScope(Dispatchers.IO + readJob).launch {
             messageUtil?.readChannel?.asFlow()?.collect {
                 val parsedMessage = adapter.fromJson(it)
-                totalBytesReceived += it.toByteArray().size
-                if (startTime == 0L) {
-                    startTime = Date().time
+                totalBytesReceived.getAndAdd(it.toByteArray().size.toLong())
+                if (startTime.get() == 0L) {
+                    startTime = AtomicLong(Date().time)
                 }
                 if (currentMessage == null && parsedMessage?.messageType == MessageType.BIDIRECTIONAL) {
                     sendMessage(it)
@@ -157,6 +143,23 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun randomizeAndSendMessage(messageType: MessageType) {
+        random.nextBytes(byteArrayPayload)
+        currentMessage = TestMessage(
+            Date().time,
+            messageType,
+            String(byteArrayPayload)
+        )
+        sendMessage(adapter.toJson(currentMessage))
+    }
+
+    private fun setPayLoadSizeAndStartTime() {
+        val payloadSize = edit_text_payload_size.text.toString()
+        edit_text_payload_size.isEnabled = false
+        byteArrayPayload = ByteArray(payloadSize.toInt())
+        startTime = AtomicLong(Date().time)
     }
 
     @Synchronized
@@ -220,7 +223,7 @@ class MainActivity : AppCompatActivity() {
 
         if (message.isNotEmpty()) {
             val send = (message + "\n").toByteArray()
-            totalBytesSent += send.size
+            totalBytesSent.getAndAdd(send.size.toLong())
             messageUtil.write(send)
         }
 

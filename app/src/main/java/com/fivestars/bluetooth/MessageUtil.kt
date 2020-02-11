@@ -34,7 +34,6 @@ class MessageUtil {
     val writeChannel = BroadcastChannel<String>(1)
     val statusChannel = BroadcastChannel<String>(1)
     private val bluetoothAdapter: BluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
-    private var mSecureAcceptThread: AcceptThread? = null
     private var mInsecureAcceptThread: AcceptThread? = null
     private var mConnectThread: ConnectThread? = null
     private var mConnectedThread: ConnectedThread? = null
@@ -81,11 +80,6 @@ class MessageUtil {
             mConnectedThread = null
         }
         state = STATE_LISTEN
-        // Start the thread to listen on a BluetoothServerSocket
-        if (mSecureAcceptThread == null) {
-            mSecureAcceptThread = AcceptThread(true)
-            mSecureAcceptThread!!.start()
-        }
         if (mInsecureAcceptThread == null) {
             mInsecureAcceptThread = AcceptThread(false)
             mInsecureAcceptThread!!.start()
@@ -148,10 +142,7 @@ class MessageUtil {
             mConnectedThread = null
         }
         // Cancel the accept thread because we only want to connect to one device
-        if (mSecureAcceptThread != null) {
-            mSecureAcceptThread!!.cancel()
-            mSecureAcceptThread = null
-        }
+
         if (mInsecureAcceptThread != null) {
             mInsecureAcceptThread!!.cancel()
             mInsecureAcceptThread = null
@@ -178,10 +169,6 @@ class MessageUtil {
         if (mConnectedThread != null) {
             mConnectedThread!!.cancel()
             mConnectedThread = null
-        }
-        if (mSecureAcceptThread != null) {
-            mSecureAcceptThread!!.cancel()
-            mSecureAcceptThread = null
         }
         if (mInsecureAcceptThread != null) {
             mInsecureAcceptThread!!.cancel()
@@ -212,7 +199,11 @@ class MessageUtil {
             data = stringBuffer.substring(0, index + "\n".length)
             stringBuffer.delete(0, index + "\n".length)
         }
-        readChannel.offer(data)
+
+        if (data.isNotEmpty()) {
+            readChannel.offer(data.trim())
+        }
+
     }
 
     /**
@@ -311,17 +302,12 @@ class MessageUtil {
             mSocketType = if (secure) "Secure" else "Insecure"
             // Create a new listening server socket
             try {
-                tmp = if (secure) {
-                    bluetoothAdapter.listenUsingRfcommWithServiceRecord(
-                        NAME_SECURE,
-                        MY_UUID_SECURE
-                    )
-                } else {
-                    bluetoothAdapter.listenUsingInsecureRfcommWithServiceRecord(
-                        NAME_INSECURE,
-                        MY_UUID_INSECURE
-                    )
-                }
+
+                tmp = bluetoothAdapter.listenUsingInsecureRfcommWithServiceRecord(
+                    NAME_INSECURE,
+                    MY_UUID_INSECURE
+                )
+
             } catch (e: IOException) {
                 Log.e(
                     TAG,
