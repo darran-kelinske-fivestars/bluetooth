@@ -84,7 +84,7 @@ class MainActivity : AppCompatActivity() {
                             totalBytesReceivedSecond = (totalBytesReceived / totalTimeInSeconds)
                         }
                         text_view_status.text =
-                            "Bytes/second sent: $totalBytesSentSecond : Bytes/second received: $totalBytesReceivedSecond"
+                            "Total bytes sent: $totalBytesSent \nBytes/second sent: $totalBytesSentSecond\nTotal bytes received: $totalBytesReceived\nBytes/second received: $totalBytesReceivedSecond"
                     }
                 } catch (e: Exception) {
                     Log.d(TAG, "The divide by zero" + e)
