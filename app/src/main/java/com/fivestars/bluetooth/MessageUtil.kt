@@ -26,17 +26,20 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.util.*
 
-class MessageUtil() {
+
+class MessageUtil {
 
     lateinit var device: BluetoothDevice
     val readChannel = BroadcastChannel<String>(1)
     val writeChannel = BroadcastChannel<String>(1)
+    val statusChannel = BroadcastChannel<String>(1)
     private val bluetoothAdapter: BluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
-    private var mSecureAcceptThread: AcceptThread? = null
     private var mInsecureAcceptThread: AcceptThread? = null
     private var mConnectThread: ConnectThread? = null
     private var mConnectedThread: ConnectedThread? = null
     private var mState: Int
+    var stringBuffer = StringBuffer()
+
 
     /**
      * Return the current connection state.  */// Give the new state to the Handler so the UI Activity can update
@@ -54,8 +57,7 @@ class MessageUtil() {
                 "setState() $mState -> $state"
             )
             mState = state
-            // Give the new state to the Handler so the UI Activity can update
-//            mHandler.obtainMessage(MainActivity.MESSAGE_STATE_CHANGE, state, -1).sendToTarget()
+            statusChannel.offer(state.toString())
         }
 
     /**
@@ -78,11 +80,6 @@ class MessageUtil() {
             mConnectedThread = null
         }
         state = STATE_LISTEN
-        // Start the thread to listen on a BluetoothServerSocket
-        if (mSecureAcceptThread == null) {
-            mSecureAcceptThread = AcceptThread(true)
-            mSecureAcceptThread!!.start()
-        }
         if (mInsecureAcceptThread == null) {
             mInsecureAcceptThread = AcceptThread(false)
             mInsecureAcceptThread!!.start()
@@ -145,10 +142,7 @@ class MessageUtil() {
             mConnectedThread = null
         }
         // Cancel the accept thread because we only want to connect to one device
-        if (mSecureAcceptThread != null) {
-            mSecureAcceptThread!!.cancel()
-            mSecureAcceptThread = null
-        }
+
         if (mInsecureAcceptThread != null) {
             mInsecureAcceptThread!!.cancel()
             mInsecureAcceptThread = null
@@ -176,10 +170,6 @@ class MessageUtil() {
             mConnectedThread!!.cancel()
             mConnectedThread = null
         }
-        if (mSecureAcceptThread != null) {
-            mSecureAcceptThread!!.cancel()
-            mSecureAcceptThread = null
-        }
         if (mInsecureAcceptThread != null) {
             mInsecureAcceptThread!!.cancel()
             mInsecureAcceptThread = null
@@ -189,18 +179,31 @@ class MessageUtil() {
 
     /**
      * Write to the ConnectedThread in an unsynchronized manner
-     * @param out The bytes to write
+     * @param byteArrayToWrite The bytes to write
      * @see ConnectedThread.write
      */
-    fun write(out: ByteArray?) { // Create temporary object
+    fun write(byteArrayToWrite: ByteArray?) { // Create temporary object
         var connectedThread: ConnectedThread?
-        // Synchronize a copy of the ConnectedThread
+
         synchronized(this) {
             if (mState != STATE_CONNECTED) return
             connectedThread = mConnectedThread
         }
-        // Perform the write unsynchronized
-        out?.run { connectedThread?.write(this) }
+        byteArrayToWrite?.run { connectedThread?.write(this) }
+    }
+
+    private fun readUntil() {
+        var data = ""
+        val index: Int = stringBuffer.indexOf("\n", 0)
+        if (index > -1) {
+            data = stringBuffer.substring(0, index + "\n".length)
+            stringBuffer.delete(0, index + "\n".length)
+        }
+
+        if (data.isNotEmpty()) {
+            readChannel.offer(data.trim())
+        }
+
     }
 
     /**
@@ -299,17 +302,12 @@ class MessageUtil() {
             mSocketType = if (secure) "Secure" else "Insecure"
             // Create a new listening server socket
             try {
-                tmp = if (secure) {
-                    bluetoothAdapter.listenUsingRfcommWithServiceRecord(
-                        NAME_SECURE,
-                        MY_UUID_SECURE
-                    )
-                } else {
-                    bluetoothAdapter.listenUsingInsecureRfcommWithServiceRecord(
-                        NAME_INSECURE,
-                        MY_UUID_INSECURE
-                    )
-                }
+
+                tmp = bluetoothAdapter.listenUsingInsecureRfcommWithServiceRecord(
+                    NAME_INSECURE,
+                    MY_UUID_INSECURE
+                )
+
             } catch (e: IOException) {
                 Log.e(
                     TAG,
@@ -411,14 +409,15 @@ class MessageUtil() {
         private val mmOutStream: OutputStream?
         override fun run() {
             Log.i(TAG, "BEGIN mConnectedThread")
+            statusChannel.offer("CONNECTED")
             val buffer = ByteArray(1024)
             var bytes: Int
             // Keep listening to the InputStream while connected
             while (true) {
                 try { // Read from the InputStream
                     bytes = mmInStream!!.read(buffer)
-                    val readMessage = String(buffer,0, bytes)
-                    readChannel.offer(readMessage)
+                    stringBuffer.append(String(buffer,0, bytes))
+                    readUntil()
                 } catch (e: IOException) {
                     Log.e(TAG, "disconnected", e)
                     connectionLost()
@@ -446,6 +445,7 @@ class MessageUtil() {
 
         fun cancel() {
             try {
+                statusChannel.offer("DISCONNECTED")
                 mmSocket!!.close()
             } catch (e: IOException) {
                 Log.e(
@@ -486,12 +486,12 @@ class MessageUtil() {
         private const val D = true
         // Name for the SDP record when creating server socket
         private const val NAME_SECURE = "BluetoothChatSecure"
-        private const val NAME_INSECURE = "BluetoothChatInsecure"
+        private const val NAME_INSECURE = "PhoneGapBluetoothSerialServiceInSecure"
         // Unique UUID for this application
         private val MY_UUID_SECURE =
             UUID.fromString("fa87c0d0-afac-11de-8a39-0800200c9a66")
         private val MY_UUID_INSECURE =
-            UUID.fromString("8ce255c0-200a-11e0-ac64-0800200c9a66")
+            UUID.fromString("23F18142-B389-4772-93BD-52BDBB2C03E9")
         // Constants that indicate the current connection state
         const val STATE_NONE = 0 // we're doing nothing
         const val STATE_LISTEN = 1 // now listening for incoming connections
