@@ -120,18 +120,28 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        CoroutineScope(Dispatchers.IO + readJob).launch {
-            messageUtil?.readChannel?.asFlow()?.collect {
-                val parsedMessage = adapter.fromJson(it)
+        CoroutineScope(newFixedThreadPoolContext(1, "uno") + readJob).launch {
+            messageUtil.readChannel.asFlow().collect {
+                val parsedMessage: TestMessage?
+
+                try {
+                    parsedMessage = adapter.fromJson(it)
+                } catch (e: java.lang.Exception) {
+                    Log.e(TAG, e.toString() + "data was: it")
+                    return@collect
+                }
                 totalBytesReceived.getAndAdd(it.toByteArray().size.toLong())
                 if (startTime.get() == 0L) {
                     startTime = AtomicLong(Date().time)
                 }
+                // Send the response message if we are the receiver app
                 if (currentMessage == null && parsedMessage?.messageType == MessageType.BIDIRECTIONAL) {
                     sendMessage(it)
                 } else {
                     parsedMessage?.run {
-                        if (time == currentMessage?.time) {
+                        // If the time on the incoming message matches our last sent message, then we received the "ACK"
+                        // Send another message to keep the data flow going
+                        if (time == currentMessage?.time && messageType == MessageType.BIDIRECTIONAL) {
                             currentMessage = TestMessage(
                                 Date().time, MessageType.BIDIRECTIONAL, String(
                                     byteArrayPayload
