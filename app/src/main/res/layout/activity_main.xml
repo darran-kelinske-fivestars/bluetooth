@@ -49,6 +49,12 @@
             android:layout_height="wrap_content"
             android:text="@string/bidirectional" />
 
+        <Button
+            android:id="@+id/listen"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="LISTEN" />
+
     </LinearLayout>
     <TextView
         android:id="@+id/text_view_status"

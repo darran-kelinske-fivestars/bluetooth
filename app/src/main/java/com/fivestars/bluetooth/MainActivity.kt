@@ -66,6 +66,10 @@ class MainActivity : AppCompatActivity() {
 
         setStatus("yowza")
 
+        listen.setOnClickListener {
+            messageUtil.listen()
+        }
+
         CoroutineScope(Dispatchers.Default + readJob).launch {
             while (true) {
                 val totalTimeInSeconds: Long = ((Date().time - startTime.get())) / 1000
@@ -175,9 +179,6 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (D) Log.e(TAG, "+ ON RESUME +")
-        if (messageUtil.state == MessageUtil.STATE_NONE) {
-            messageUtil.start()
-        }
         checkLocationPermission()
     }
 
@@ -226,10 +227,6 @@ class MainActivity : AppCompatActivity() {
      * @param message  A string of text to send.
      */
     private fun sendMessage(message: String) { // Check that we're actually connected before trying anything
-        if (messageUtil.state != MessageUtil.STATE_CONNECTED) {
-            return
-        }
-
         if (message.isNotEmpty()) {
             val send = (message + "\n").toByteArray()
             totalBytesSent.getAndAdd(send.size.toLong())
@@ -272,7 +269,7 @@ class MainActivity : AppCompatActivity() {
         // Get the BluetoothDevice object
         val device = mBluetoothAdapter!!.getRemoteDevice(address)
         // Attempt to connect to the device
-        messageUtil!!.connect(device, secure)
+        messageUtil.connect(address!!)
     }
 
     override fun onCreateOptionsMenu(menu: Menu?): Boolean {
