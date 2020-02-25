@@ -9,7 +9,6 @@ import android.os.Bundle
 import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
-import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -206,7 +205,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         // Stop the Bluetooth chat services
-        messageUtil.stop()
+        messageUtil.disconnect()
         if (D) Log.e(TAG, "--- ON DESTROY ---")
         readJob.cancel()
     }
@@ -234,7 +233,7 @@ class MainActivity : AppCompatActivity() {
         if (message.isNotEmpty()) {
             val send = (message + "\n").toByteArray()
             totalBytesSent.getAndAdd(send.size.toLong())
-            messageUtil.write(send)
+            messageUtil.send(send)
         }
 
     }
