@@ -269,7 +269,7 @@ class MainActivity : AppCompatActivity() {
         // Get the BluetoothDevice object
         val device = mBluetoothAdapter!!.getRemoteDevice(address)
         // Attempt to connect to the device
-        messageUtil.connect(address!!)
+
     }
 
     override fun onCreateOptionsMenu(menu: Menu?): Boolean {
@@ -294,9 +294,11 @@ class MainActivity : AppCompatActivity() {
         var serverIntent: Intent? = null
         when (item.itemId) {
             R.id.insecure_connect_scan -> {
+                messageUtil.connect("40:A1:08:2B:5B:0D")
+//                messageUtil.connect("18:21:95:5A:A3:80")
                 // Launch the DeviceListActivity to see devices and do scan
-                serverIntent = Intent(this, DeviceListActivity::class.java)
-                startActivityForResult(serverIntent, REQUEST_CONNECT_DEVICE_INSECURE)
+//                serverIntent = Intent(this, DeviceListActivity::class.java)
+//                startActivityForResult(serverIntent, REQUEST_CONNECT_DEVICE_INSECURE)
                 return true
             }
             R.id.discoverable -> {

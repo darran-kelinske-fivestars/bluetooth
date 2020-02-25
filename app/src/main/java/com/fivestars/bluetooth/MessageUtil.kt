@@ -27,6 +27,7 @@ import kotlinx.coroutines.newFixedThreadPoolContext
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.lang.Thread.sleep
 import java.util.*
 import kotlin.coroutines.CoroutineContext
 
@@ -40,48 +41,66 @@ class MessageUtil {
     var stringBuffer = StringBuffer()
     var inputStream: InputStream? = null
     var outputStream: OutputStream? = null
-    private var bluetoothServerSocket: BluetoothServerSocket? = null
+    private var connected: Boolean = false;
 
     fun listen() {
-        CoroutineScope(
-            newFixedThreadPoolContext(1, "uno")).launch {
-            val localBluetoothServerSocket = bluetoothAdapter.listenUsingInsecureRfcommWithServiceRecord(
-                NAME_INSECURE,
-                MY_UUID_INSECURE
-            )
+        val localBluetoothServerSocket = bluetoothAdapter.listenUsingInsecureRfcommWithServiceRecord(
+            NAME_INSECURE,
+            MY_UUID_INSECURE
+        )
+        Thread {
+            while(!connected) {
 
-            bluetoothServerSocket = localBluetoothServerSocket
+                try {
+                    val socket = localBluetoothServerSocket.accept()
 
-            try {
-                val socket = localBluetoothServerSocket.accept()
+                    localBluetoothServerSocket.close()
 
-//                localBluetoothServerSocket.close()
-
-                socket?.run {
-                    connect()
-                    setupSocket(this)
+                    socket?.run {
+                        try {
+                            connect()
+                        } catch (e: IOException) {
+                            Log.e(
+                                TAG,
+                                "Failure connecting to socket",
+                                e
+                            )
+                        }
+                        if (this.isConnected) {
+                            setupSocket(this)
+                        }
+                    }
+                } catch (e: IOException) {
+                    Log.e(
+                        TAG,
+                        "Failure connecting to socket",
+                        e
+                    )
                 }
-            } catch (e: IOException) {
-                Log.e(
-                    TAG,
-                    "Socket Type: accept() failed",
-                    e
-                )
             }
-        }
+        }.start()
     }
 
     fun connect(address: String) {
-        CoroutineScope(
-            newFixedThreadPoolContext(1, "dos")).launch {
+        Thread {
             bluetoothAdapter.cancelDiscovery()
             val bluetoothDevice = bluetoothAdapter.getRemoteDevice(address)
             val bluetoothSocket = bluetoothDevice.createInsecureRfcommSocketToServiceRecord(
                 MY_UUID_INSECURE
             )
-            bluetoothSocket.connect()
-            setupSocket(bluetoothSocket)
-        }
+            while (!connected) {
+                try {
+                    bluetoothSocket.connect()
+                    setupSocket(bluetoothSocket)
+                } catch (e: IOException) {
+                    Log.e(
+                        TAG,
+                        "Failure connecting to socket",
+                        e
+                    )
+                }
+            }
+        }.start()
     }
 
     /**
@@ -89,26 +108,32 @@ class MessageUtil {
      */
     @Synchronized
     fun disconnect() {
-        bluetoothServerSocket?.close()
     }
 
     private fun setupSocket(bluetoothSocket: BluetoothSocket) {
-        inputStream = bluetoothSocket.inputStream
-        outputStream = bluetoothSocket.outputStream
+        connected = true;
+        CoroutineScope(
+            newFixedThreadPoolContext(1, "uno")).launch {
+            inputStream = bluetoothSocket.inputStream
+            outputStream = bluetoothSocket.outputStream
 
-        val localInputStream = inputStream!!
-        val buffer = ByteArray(1024)
-        var bytes: Int
+            val localInputStream = inputStream!!
+            val buffer = ByteArray(1024)
+            var bytes: Int
 
-        while (true) {
-            try {
-                bytes = localInputStream.read(buffer)
-                stringBuffer.append(String(buffer, 0, bytes))
-                Log.d(TAG, "this is the current buffer: " + stringBuffer)
-            } catch (e: IOException) {
-                Log.e(TAG, "disconnected", e)
-                connectionLost()
-                break
+            Log.e(TAG, "Setting up socket.")
+
+            while (true) {
+                try {
+                    bytes = localInputStream.read(buffer)
+                    stringBuffer.append(String(buffer, 0, bytes))
+                    Log.d(TAG, "this is the current buffer: " + stringBuffer)
+                } catch (e: IOException) {
+                    Log.e(TAG, "disconnected", e)
+                    connected = false
+                    connectionLost()
+                    break
+                }
             }
         }
     }
@@ -131,6 +156,7 @@ class MessageUtil {
     private fun connectionLost() { // Send a failure message back to the Activity
         // Start the service over to restart listening mode
 //        start()
+        connected = false
     }
 
     companion object {
