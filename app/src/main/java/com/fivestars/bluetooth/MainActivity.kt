@@ -5,11 +5,11 @@ import android.app.Activity
 import android.bluetooth.BluetoothAdapter
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
-import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -23,6 +23,8 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.collect
 import java.lang.Thread.sleep
+import java.lang.reflect.Field
+import java.lang.reflect.InvocationTargetException
 import java.util.*
 import java.util.concurrent.atomic.AtomicLong
 
@@ -65,7 +67,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        setStatus("yowza")
+        setStatus(getBluetoothAddress().toString())
 
         CoroutineScope(Dispatchers.Default + readJob).launch {
             while (true) {
@@ -247,6 +249,25 @@ class MainActivity : AppCompatActivity() {
     private fun setStatus(subTitle: CharSequence) {
         val actionBar = supportActionBar
         actionBar?.subtitle = subTitle
+    }
+
+    private fun getBluetoothAddress(): String? {
+        val bluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
+        var bluetoothMacAddress: String? = null
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                val serviceField: Field = bluetoothAdapter.javaClass.getDeclaredField("mService")
+                serviceField.isAccessible = true
+                val btManagerService: Any = serviceField.get(bluetoothAdapter)
+                bluetoothMacAddress =
+                    btManagerService.javaClass.getMethod("getAddress").invoke(btManagerService) as String
+            } catch (e: Exception) {
+                Log.e(TAG, "Unable to retrieve Bluetooth MAC Address: $e")
+            }
+        } else {
+            bluetoothMacAddress = bluetoothAdapter.address
+        }
+        return bluetoothMacAddress
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
